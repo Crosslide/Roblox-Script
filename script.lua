@@ -116,40 +116,7 @@ end
 -- Llamar a la función para mantener la velocidad personalizada
 forceSpeed()
 
-
--- Pestaña de Stamina
-local staminaTab = Window:CreateTab("Stamina", 1)
-
--- Crear un botón para activar la stamina infinita
-local staminaButton = staminaTab:CreateButton({
-    Name = "Activar Stamina Infinita",
-    Callback = function()
-        local replicated_storage = game:GetService("ReplicatedStorage");
-
-        local packages = replicated_storage:FindFirstChild("Packages");
-        local knit_module = packages:FindFirstChild("Knit");
-        local services = knit_module:FindFirstChild("Services");
-
-        local local_player = game:GetService("Players").LocalPlayer;
-        local player_stats = local_player.PlayerStats;
-
-        local inf_stamina_method = "remote"; -- remote or playerstats
-
-        while task.wait() do
-            local decrease_stamina = services:FindFirstChild("StaminaService").RE.DecreaseStamina;
-            local stamina_instance = player_stats.Stamina;
-
-            if inf_stamina_method == "remote" then
-                decrease_stamina:FireServer(math.sqrt(-1)) -- nan, dont set this to zero you will get kicked
-            elseif inf_stamina_method == "playerstats" then
-                stamina_instance.Value = 99
-            end;
-        end;
-    end
-})
-
 -- Pestaña de Gravedad
--- Crear la pestaña de Gravedad
 local gravityTab = Window:CreateTab("Gravedad", 2)
 
 -- Función para ajustar la gravedad
@@ -165,7 +132,7 @@ end
 -- Crear un slider para ajustar la gravedad
 local gravitySlider = gravityTab:CreateSlider({
     Name = "Ajustar Gravedad",
-    Range = {0, 500},
+    Range = {0, 140},
     Increment = 1,
     Suffix = " u/s²",
     CurrentValue = workspace.Gravity,
@@ -183,3 +150,276 @@ local resetButton = gravityTab:CreateButton({
         gravitySlider:SetValue(196.2) -- Actualizar el slider
     end
 })
+
+-- Pestaña de Reach
+local reachTab = Window:CreateTab("Reach", 3)
+
+-- Configuración de Reach
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local LOCAL_PLAYER = Players.LocalPlayer
+
+-- Configuración de colores y transparencia
+local PRIMARY_COLOR = Color3.fromRGB(187, 217, 134)  -- Verde claro pastel
+local GOALIE_COLOR = Color3.fromRGB(244, 248, 239)   -- Blanco hueso
+local HIGH_TRANSPARENCY = 1                       -- Casi invisible
+
+-- Configuraciones de hitboxes
+local HitboxConfigs = {
+    Dribble = {
+        Size = Vector3.new(9.9, 2.2, 9.9),
+        Color = PRIMARY_COLOR,
+        Transparency = HIGH_TRANSPARENCY,
+        Material = Enum.Material.Neon,
+        Path = function()
+            local playerModel = Workspace:FindFirstChild(LOCAL_PLAYER.Name)
+            if not playerModel then return nil end
+            local hitboxFolder = playerModel:FindFirstChild("Hitbox")
+            if not hitboxFolder then return nil end
+            return hitboxFolder:FindFirstChild("Dribble")
+        end
+    },
+    Kick = {
+        Size = Vector3.new(15, 30, 15),
+        Color = PRIMARY_COLOR,
+        Transparency = HIGH_TRANSPARENCY,
+        Material = Enum.Material.Neon,
+        Path = function()
+            local playerModel = Workspace:FindFirstChild(LOCAL_PLAYER.Name)
+            if not playerModel then return nil end
+            local hitboxFolder = playerModel:FindFirstChild("Hitbox")
+            if not hitboxFolder then return nil end
+            return hitboxFolder:FindFirstChild("Kick")
+        end
+    },
+    Slide = {
+        Size = Vector3.new(12, 1.5, 12),
+        Color = PRIMARY_COLOR,
+        Transparency = HIGH_TRANSPARENCY,
+        Material = Enum.Material.Neon,
+        Path = function()
+            local playerModel = Workspace:FindFirstChild(LOCAL_PLAYER.Name)
+            if not playerModel then return nil end
+            local hitboxFolder = playerModel:FindFirstChild("Hitbox")
+            if not hitboxFolder then return nil end
+            return hitboxFolder:FindFirstChild("Slide")
+        end
+    },
+    Goalie = {
+        Size = Vector3.new(20, 25, 20),
+        Color = GOALIE_COLOR,
+        Transparency = HIGH_TRANSPARENCY,
+        Material = Enum.Material.Neon,
+        Path = function()
+            local playerModel = Workspace:FindFirstChild(LOCAL_PLAYER.Name)
+            if not playerModel then return nil end
+            local hitboxFolder = playerModel:FindFirstChild("Hitbox")
+            if not hitboxFolder then return nil end
+            return hitboxFolder:FindFirstChild("Goalie")
+        end
+    }
+}
+
+local States = {
+    Dribble = {original = {}, active = false},
+    Kick = {original = {}, active = false},
+    Slide = {original = {}, active = false},
+    Goalie = {original = {}, active = false}
+}
+
+-- Ajustes de incremento
+local INCREMENT_STEP = 2
+local MAX_INCREMENT = 50
+local currentIncrement = 0
+local debounce = false
+
+-- Eliminar la GUI de Roblox si existe
+if LOCAL_PLAYER:FindFirstChild("PlayerGui") then
+    local reachGui = LOCAL_PLAYER.PlayerGui:FindFirstChild("ReachGui")
+    if reachGui then
+        reachGui:Destroy()
+    end
+end
+
+-- Funcionalidad principal
+local function updateHitboxSizes()
+    local successCount = 0
+    
+    for name, config in pairs(HitboxConfigs) do
+        local hitbox = config.Path()
+        if not hitbox then continue end
+
+        local state = States[name]
+        
+        if not state.original.Size then
+            state.original = {
+                Size = hitbox.Size,
+                Transparency = hitbox.Transparency,
+                Color = hitbox.Color,
+                Material = hitbox.Material,
+                CanQuery = hitbox.CanQuery,
+                CanTouch = hitbox.CanTouch,
+                CanCollide = hitbox.CanCollide
+            }
+        end
+
+        hitbox.Size = state.original.Size + Vector3.new(currentIncrement, currentIncrement, currentIncrement)
+        hitbox.Transparency = config.Transparency
+        hitbox.Color = config.Color
+        hitbox.Material = config.Material
+        hitbox.CanQuery = true
+        hitbox.CanTouch = true
+        hitbox.CanCollide = false
+        
+        successCount += 1
+    end
+    
+    return successCount > 0
+end
+
+local function resetToOriginal()
+    for name, state in pairs(States) do
+        local hitbox = HitboxConfigs[name].Path()
+        if hitbox and state.original.Size then
+            for property, value in pairs(state.original) do
+                pcall(function() hitbox[property] = value end)
+            end
+        end
+    end
+end
+
+-- Crear botones en Rayfield para Reach
+local reachSection = reachTab:CreateSection("Ajustes de Reach")
+
+local increaseButton = reachTab:CreateButton({
+    Name = "Aumentar Reach",
+    Callback = function()
+        if debounce then return end
+        debounce = true
+        
+        if currentIncrement < MAX_INCREMENT then
+            currentIncrement += INCREMENT_STEP
+            if updateHitboxSizes() then
+                Rayfield:Notify({
+                    Title = "Reach Aumentado",
+                    Content = "Nuevo reach: "..currentIncrement,
+                    Duration = 3
+                })
+            end
+        else
+            Rayfield:Notify({
+                Title = "Límite Alcanzado",
+                Content = "Has llegado al máximo reach ("..MAX_INCREMENT..")",
+                Duration = 3
+            })
+        end
+        
+        debounce = false
+    end
+})
+
+local resetButton = reachTab:CreateButton({
+    Name = "Resetear Reach",
+    Callback = function()
+        if debounce then return end
+        debounce = true
+        
+        currentIncrement = 0
+        resetToOriginal()
+        Rayfield:Notify({
+            Title = "Reach Reseteado",
+            Content = "El reach ha vuelto a su valor original",
+            Duration = 3
+        })
+        
+        debounce = false
+    end
+})
+
+-- Botones para activar/desactivar hitboxes específicas
+local hitboxSection = reachTab:CreateSection("Hitboxes Específicas")
+
+local function toggleHitbox(hitboxName)
+    local state = States[hitboxName]
+    state.active = not state.active
+    
+    local hitbox = HitboxConfigs[hitboxName].Path()
+    if hitbox then
+        if state.active then
+            if not state.original.Size then
+                state.original = {
+                    Size = hitbox.Size,
+                    Transparency = hitbox.Transparency,
+                    Color = hitbox.Color,
+                    Material = hitbox.Material,
+                    CanQuery = hitbox.CanQuery,
+                    CanTouch = hitbox.CanTouch,
+                    CanCollide = hitbox.CanCollide
+                }
+            end
+            
+            hitbox.Size = state.original.Size + Vector3.new(currentIncrement, currentIncrement, currentIncrement)
+            hitbox.Transparency = HitboxConfigs[hitboxName].Transparency
+            hitbox.Color = HitboxConfigs[hitboxName].Color
+            hitbox.Material = HitboxConfigs[hitboxName].Material
+            hitbox.CanQuery = true
+            hitbox.CanTouch = true
+            hitbox.CanCollide = false
+        else
+            for property, value in pairs(state.original) do
+                pcall(function() hitbox[property] = value end)
+            end
+        end
+    end
+    
+    Rayfield:Notify({
+        Title = "Hitbox "..hitboxName,
+        Content = state.active and "Activada" or "Desactivada",
+        Duration = 3
+    })
+end
+
+local dribbleButton = reachTab:CreateButton({
+    Name = "Activar/Desactivar Dribble",
+    Callback = function()
+        toggleHitbox("Dribble")
+    end
+})
+
+local kickButton = reachTab:CreateButton({
+    Name = "Activar/Desactivar Kick",
+    Callback = function()
+        toggleHitbox("Kick")
+    end
+})
+
+local slideButton = reachTab:CreateButton({
+    Name = "Activar/Desactivar Slide",
+    Callback = function()
+        toggleHitbox("Slide")
+    end
+})
+
+local goalieButton = reachTab:CreateButton({
+    Name = "Activar/Desactivar Goalie",
+    Callback = function()
+        toggleHitbox("Goalie")
+    end
+})
+
+-- Manejo de personaje
+local function onCharacterAdded(character)
+    local maxTries = 15
+    for i = 1, maxTries do
+        if updateHitboxSizes() then break end
+        task.wait(0.3)
+    end
+end
+
+-- Inicialización
+if LOCAL_PLAYER.Character then
+    task.spawn(onCharacterAdded, LOCAL_PLAYER.Character)
+end
+LOCAL_PLAYER.CharacterAdded:Connect(onCharacterAdded)
+
+print("✅ Script activado | Hitboxes: Dribble (Verde), Kick, Slide, Goalie (Blanco)")
